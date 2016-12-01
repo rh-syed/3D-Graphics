@@ -157,34 +157,11 @@ ReflectRay(Vector incident, Vector normal)
 	Vector reflect;
 	double dotIN;
 
-	dotIN= -DOT(incident, normal);
-	TIMES(reflect, normal, 2.0*dotIN);
+	dotIN= DOT(incident, normal);
+	TIMES(reflect, normal, -2.0*dotIN);
 	PLUS(reflect, incident, reflect);
 
 	return reflect;
-}
-
-Vector
-RefractRay(Vector incident, Vector normal, double n2)
-{
-	Vector refract;
-	double c1;
-	double c2;
-	double n;
-	Vector x, y;
-	
-	c1= DOT(incident, normal);
-	
-	n = 1.0/n2;
-	
-	c2 = sqrt(1 - pow(n,2) * (1 - pow(c1, 2))) ;
-	
-	TIMES(x, incident, n);
-	TIMES(y, normal, n * c1 - c2);
-	
-	PLUS(refract, x, y);
-	
-	return refract;
 }
 
 /*
