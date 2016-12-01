@@ -3,7 +3,6 @@
 	NAME: Syed Rahman, cse32011, 212206975
 	NAME: Li Yin, yinl1, 211608973
 	Date: November 10, 2016.
-	
  * deals with lights/shading functions
  *
  *	John Amanatides, Oct 2016
@@ -12,6 +11,7 @@
 
 #include <stddef.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <math.h>
 #include "artInternal.h"
 
@@ -23,6 +23,7 @@
 
 extern double	Normalize(Vector *);
 extern Vector	ReflectRay(Vector, Vector);
+extern Vector	RefractRay(Vector, Vector, double);
 extern int	IntersectScene(Ray *, double *, Vector *, Material *);
 extern int	ShadowProbe(Ray *, double);
 extern int TransmitRay(Vector, Vector, double, double, Vector *);
@@ -90,7 +91,7 @@ Texture(Material *material, Point position)
 {               
 	int funnySum;
 	double EPSILON= 0.0001;
-	double contribution;
+	double factor;
 	Color result;
 
 	switch(material->texture) {
@@ -103,8 +104,8 @@ Texture(Material *material, Point position)
 			return white;
 		else    return material->col;
 	case ZONE_PLATE:
-		contribution= 0.5*cos(DOT(position, position))+0.5;
-		TIMES(result, material->col, contribution);
+		factor= 0.5*cos(DOT(position, position))+0.5;
+		TIMES(result, material->col, factor);
 		return result;  
 	default:                
 	return material->col;
@@ -118,54 +119,79 @@ static Color
 ComputeRadiance(Ray *ray, double t, Vector normal, Material material)
 {
 
-  Color sample, surfaceCol, diffuse, specular, reflect, transmit;
-  Color GetRadiance(Ray *);
-  Ray shadowRay, newRay;
-  Vector toLight, hitPoint, reflectDif;
-  double NdotL, LdotR, flux, contribution, distanceToLight, NdotI;
-  LightNode *lightP;
-  int goesThrough;
-    
-	(void) Normalize(&normal);
- TIMES(hitPoint, ray->direction, t);
- PLUS(hitPoint, ray-> origin, hitPoint);
- if(material.texture!=0)
-   surfaceCol = Texture(&material, hitPoint);
- else surfaceCol = material.col;
+  Color myColor, surface, d, s, refl, refr;
+  Vector light, hit, r, rf;
+  double NdotL, NdotI, LdotR, flux, factor, distance;
+  Ray shadow, reflect, refract;
+  LightNode *lightPoint;
+  
+  //determine hitpoint
+  (void) Normalize(&normal);
+  TIMES(hit, ray->direction, t);
+  PLUS(hit, ray-> origin, hit);
+  
+  //check surface material
+  if(material.texture!=0)
+	  surface = Texture(&material, hit);
+  else surface = material.col;
+  
+  TIMES(myColor, surface, material.Ka);
+  r=ReflectRay(ray->direction, normal);
+  rf=RefractRay(ray->direction, normal, (double)material.index);
+
+	reflect.origin=hit;
+	reflect.direction=r;
+	reflect.generation=ray->generation +1;
+	refract.origin=hit;
+	refract.direction=rf;
+	refract.generation=ray->generation +1;
+
+	if(material.Kt > 0.0 && material.Kr == 0.0 && ray->generation < MAX_RECURSION) {
+			if(IntersectScene(&refract, &t, &normal, &material) == HIT){
+				refr = ComputeRadiance(&refract, t, normal, material);
+				PLUS(myColor, refr, myColor);
+			}
+	}
+	else if(material.Kr > 0.0 && material.Kt == 0.0 && ray->generation < MAX_RECURSION){
+		if(IntersectScene(&reflect, &t, &normal, &material) == HIT){
+			refl = ComputeRadiance(&reflect, t, normal, material);
+			PLUS(myColor, refl, myColor);
+		}
+	}
+	else{
+		//perform lighting calculation
+  		for(lightPoint = lights; lightPoint != NULL;lightPoint=lightPoint->next){
+	  MINUS(light, lightPoint->position, hit);
+	  distance = Normalize(&light);
+	  
+	  //shadow generation
+	  shadow.origin=hit;
+	  shadow.direction=light;
+	  shadow.generation=0;
+	  NdotL=DOT(light, normal);
+	  
+	  if(ShadowProbe(&shadow, distance)!= HIT && NdotL > 0.0) {
+		  flux=lightPoint->intensity/(distance*distance);
+		  
+		  //determine effective contribution factor towards diffuse lighting
+		  factor= flux*material.Kd*NdotL;
+		  TIMES(d, surface, factor);
+		  PLUS(myColor, d, myColor);
+		  
+		  LdotR= DOT(light, r);
+		  if(LdotR > 0.0) {
+			  
+			  //determine effective contribution factor towards specular lighting
+			  factor= flux*material.Ks*pow(LdotR, (double) material.n);
+			  TIMES(s,white,factor);
+			  PLUS(myColor, s, myColor);
+			  }
+		}
+		
+	}
+	}
  
- TIMES(sample, surfaceCol, material.Ka);
- reflectDif=ReflectRay(ray->direction, normal);
- 
- /*go through each light computing diffuse + specular + shadows */
- for(lightP = lights; lightP != NULL;lightP=lightP->next){
-   /* compute direction to light */
-   MINUS(toLight, lightP->position, hitPoint);
-   distanceToLight = Normalize(&toLight);
-   
-   shadowRay.origin=hitPoint;
-   shadowRay.direction=toLight;
-   shadowRay.generation=0;
-   NdotL=DOT(toLight, normal);
-   if(NdotL > 0.0 && ShadowProbe(&shadowRay, distanceToLight)!= HIT) {
-     flux=lightP->intensity/(distanceToLight*distanceToLight);
-     
-     /* diffuse */
-     contribution= flux*material.Kd*NdotL;
-     TIMES(diffuse, surfaceCol, contribution);
-     PLUS(sample, diffuse, sample);
-     
-     /* specular */
-     LdotR= DOT(toLight, reflectDif);
-     if(LdotR > 0.0) {
-       contribution= flux*material.Ks*pow(LdotR, (double) material.n);
-       TIMES(specular,white,contribution);
-       PLUS(sample, specular, sample);
-     }
-     
-   }
- }
- 
-	return sample;
+	return myColor;
 }
 
 
